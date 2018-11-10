@@ -11,8 +11,8 @@ for _ in range(2):
         from nltk.stem.porter import PorterStemmer        
 
         g_StopWordsEnglish = stopwords.words('english')
-        v_addWords = [ 'new', 'like', 'u', "it'", "'s", "n't", 'mr.', 'from', 'subject', 're', 'edu', 'use', 'table' ]
-        g_StopWordsEnglish.extend(v_addWords)
+        v_stopWords = [ 'new', 'like', 'u', "it'", "'s", "n't", 'mr.', 'from', 'subject', 're', 'edu', 'use', 'table' ]
+        g_StopWordsEnglish.extend(v_stopWords)
         g_StopWordsEnglish = list(set(g_StopWordsEnglish))
 
         break
@@ -21,7 +21,7 @@ for _ in range(2):
         nltk.download(['punkt', 'stopwords', 'wordnet', 'averaged_perceptron_tagger', 'words'])
 
         
-#--------------------------------------------------------------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------------------------------------------------------------
 class NLPDocument():
     
     __punctuation      = None
@@ -40,8 +40,10 @@ class NLPDocument():
                   p_filterMinSize    = None, 
                   p_excludeTags      = None, 
                   p_includeTags      = None ):
-        self.__punctuation      = punctuation + '”“‘’»' + "'"
-        self.__document         = p_document.lower().replace("'ll", ' will')
+        self.__punctuation      = punctuation + "”“‘’»'"
+        self.__document         = ( p_document.lower().replace("'ll ", ' will ')
+                                                      .replace("'re ", ' are ')
+                                                      .replace("'ve ", ' have ') )
         self.__usePorterStemmer = p_usePorterStemmer    
         self.__filterMinSize    = p_filterMinSize 
         self.__excludeTags      = p_excludeTags 
@@ -82,9 +84,6 @@ class NLPDocument():
         for email in v_emails:
             self.__document = self.__document.replace(email, "emailplaceholder") 
         
-        # Remove new line characters
-        # self.__document = re.sub('\s+', ' ', self.__document)
-        
         return nltk.sent_tokenize(self.__document)
     
     def __wordTokenize__(self):
@@ -118,9 +117,6 @@ class NLPDocument():
         if not self.__excludeTags is None:
             self.__clean_tokens = [item[0] for item in v_pos_tag if item[1] not in self.__excludeTags]
             
-        #v_wordlist = [w for w in nltk.corpus.words.words('en') if w.islower()]
-        #v_ner_tagged = nltk.ne_chunk(v_tagged_tokens)
-        
         self.__clean_document = ' '.join(self.__clean_tokens)
                 
         self.__pos_tags = {}
