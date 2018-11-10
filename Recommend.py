@@ -2,18 +2,78 @@ import pandas as pd
 import numpy as np
 
 def getArticles(p_articlesID, p_articles):
+    '''
+    INPUT:
+        p_articlesID     - the list of articles for which we want to get the details
+        p_articles       - (pandas dataframe) the dataframe containing the articles
+    
+    OUTPUT:
+        The details for the article list provided as an input.
+    '''
     return p_articles.set_index('article_id').loc[p_articlesID, ['title', 'topic_keywords']].reset_index()
 
 def getTopArticlesID(p_userArticles, p_top = 20):
+    '''
+    INPUT:
+        p_userArticles   - (pandas dataframe) the dataframe containing the user and articles interaction
+        p_top            - number of records to e returned
+    
+    OUTPUT:
+        The list of IDs for the TOP articles based on the total number of interactions.
+    '''
     v_data = p_userArticles.groupby(['article_id']).agg({'article_id': ['count']}).reset_index()
     v_data.columns = ['article_id', 'Article Read No']
     return v_data.sort_values('Article Read No', ascending = False).head(p_top)
 
 def getTopArticles(p_articles, p_userArticles, p_top = 20):
+    '''
+    INPUT:
+        p_articles       - (pandas dataframe) the dataframe containing the articles
+        p_userArticles   - (pandas dataframe) the dataframe containing the user and articles interaction
+        p_top            - number of records to e returned
+    
+    OUTPUT:
+        The TOP articles based on the total number of interactions.
+    '''
     v_TopArticlesID = getTopArticlesID( p_userArticles = p_userArticles, 
                                         p_top          = p_top )
     v_TopArticlesID = v_TopArticlesID.merge(p_articles, how = 'inner', on = 'article_id')    
     return v_TopArticlesID[['article_id', 'title', 'topic_keywords', 'Article Read No']]
+
+def getUserArticlesMatrix(p_userArticles):
+    '''
+    INPUT:
+        p_userArticles   - (pandas dataframe) the dataframe containing the user and articles interaction
+    
+    OUTPUT:
+        The matrix for the user / articles interactions
+    '''
+    return ( p_userArticles.groupby(['user_id', 'article_id'])
+                           .agg({'article_id': ['count']})
+                           .apply(lambda x: 1, axis = 1)
+                           .unstack()
+                           .fillna(0) )
+
+def getArticleSimilarity(p_articles):
+    '''
+    INPUT:
+        p_articles       - (pandas dataframe) the dataframe containing the articles
+    
+    OUTPUT:
+        The matrix containg the similarity between articles.
+    '''
+    v_articleKeywords = pd.DataFrame(p_articles.set_index('article_id')['topic_keywords'].apply(lambda x: x.split(' ')))
+    v_keywords = []
+    for keywords in v_articleKeywords['topic_keywords']:
+        v_keywords.extend(keywords)
+    v_keywords = sorted(set(v_keywords))
+
+    for keyword in v_keywords:
+        v_articleKeywords[keyword] = v_articleKeywords['topic_keywords'].apply(lambda x: 1 if keyword in x else 0)
+
+    v_articleKeywords.drop('topic_keywords', axis = 1, inplace = True)
+    v_articleSimilarity = v_articleKeywords.dot(v_articleKeywords.T)
+    return v_articleSimilarity
 
 class User():
     
@@ -23,6 +83,14 @@ class User():
     __userArticlesInteract__ = None
     
     def __init__(self, p_user_id, p_articles, p_userArticles, p_userArticlesMatrix):
+        ''' Initiates the class for a specific user.
+        INPUT:
+            p_user_id            - ID for the user
+            p_articles           - (pandas dataframe) the dataframe containing the articles
+            p_userArticles       - (pandas dataframe) the dataframe containing the user and articles interaction
+            p_userArticlesMatrix - (pandas dataframe) the matrix for the user / articles interactions. Can be calculated by using 
+                                    function Recommend.getUserArticlesMatrix()
+        '''
         self.__user_id__ = p_user_id
         self.__setUserArticles__(p_articles, p_userArticles, p_userArticlesMatrix)
         return
@@ -40,11 +108,22 @@ class User():
         return self.__userArticlesInteract__
     
     def __setUserArticles__(self, p_articles, p_userArticles, p_userArticlesMatrix):
+        ''' Internal Function. Calculates the articles and interactions for a specific user.
+        INPUT:
+            p_articles           - (pandas dataframe) the dataframe containing the articles
+            p_userArticles       - (pandas dataframe) the dataframe containing the user and articles interaction
+            p_userArticlesMatrix - (pandas dataframe) the matrix for the user / articles interactions. Can be calculated by using 
+                                    function Recommend.getUserArticlesMatrix()
+        '''
         v_userArticleGroup = p_userArticles.groupby(['article_id']).agg({'article_id': ['count']})
         v_userArticleGroup.columns = ['Article Read No']
         
         v_userArticlesMatrix = p_userArticlesMatrix.loc[self.__user_id__, :]
-        v_userArticlesID = v_userArticlesMatrix[~v_userArticlesMatrix.isnull()].index.tolist()    
+        v_userArticlesID = v_userArticlesMatrix[v_userArticlesMatrix == 1].index.tolist()
+        
+        # If we have only the empty article ID, than we set the list to empty
+        if v_userArticlesID == [-999]:
+            v_userArticlesID = []
         
         self.__userArticlesNo__       = len(v_userArticlesID)
         self.__userArticlesInteract__ = ( p_userArticles[p_userArticles['user_id'] == self.__user_id__]
@@ -76,7 +155,18 @@ class RecommendArticles():
     
     def __init__(self, p_user_id, p_articles, p_userArticles, p_userArticlesMatrix, p_articleSimilarity,
                        p_artPerUser = 10, p_top = 30, p_keywords = [] ): 
-        
+        ''' Initiates the class for a specific user.
+        INPUT:
+            p_user_id            - ID for the user
+            p_articles           - (pandas dataframe) the dataframe containing the articles
+            p_userArticles       - (pandas dataframe) the dataframe containing the user and articles interaction
+            p_userArticlesMatrix - (pandas dataframe) the matrix for the user / articles interactions. Can be calculated by using 
+                                    function Recommend.getUserArticlesMatrix()
+            p_articleSimilarity  - (pandas dataframe) the matrix containg the similarity between articles. Can be calculated by using 
+                                    function Recommend.getArticleSimilarity()
+            p_artPerUser         - number of articles selected from a particular user read articles
+            p_top                - number of articles to be recommended
+        '''        
         v_articles = p_articles.append(pd.DataFrame({ 'article_id':     -999, 
                                                       'topic_keywords': 'nan' }, index = [-1]), ignore_index = True, sort = True)
         
@@ -116,6 +206,12 @@ class RecommendArticles():
         return self.__recommendations__
     
     def __getRecommendations__(self, p_articles, p_articleSimilarity): 
+        ''' Internal Function. Calculates the recommendations for a specific user.
+        INPUT:
+            p_articles           - (pandas dataframe) the dataframe containing the articles
+            p_articleSimilarity  - (pandas dataframe) the matrix containg the similarity between articles. Can be calculated by using 
+                                    function Recommend.getArticleSimilarity()
+        '''
         def setKeywordsSimilarity(p_articles):
             if len(self.__keywords__) == 0:
                 p_articles['Keywords Similarity'] = 0
@@ -138,11 +234,11 @@ class RecommendArticles():
             p_articles = p_articles[ p_articles['article_id'] != p_articles['Duplicate']]
             return p_articles.drop('Duplicate', axis = 1)
         
-        self.__recommendations__ = pd.DataFrame()
         # We make the distinction between 3 cases:
         #     - Case 1: the given user has other similar users with at least 3 common articles
         #     - Case 2: the given user has read at least one article
         #     - Case 3: none of the above
+        self.__recommendations__ = pd.DataFrame()
         if max(self.__similarUsersID__['Articles Similarity']) > 3:            
             for idx in self.__similarUsersID__['Similar_Users'].index:
                 v_similarUser = self.__similarUsersID__.loc[idx, 'Similar_Users']
@@ -174,7 +270,7 @@ class RecommendArticles():
             
             self.__recommendations__ = removeDuplicates(v_articles)
         
-        elif max(self.getUser().getUserArticles()['article_id'].tolist()) > 0: 
+        elif self.getUser().getUserArticlesNo() > 0: 
             def getSimilarArticles(p_article_id, p_articles, p_articleSimilarity):
                 '''
                 INPUT
@@ -235,16 +331,22 @@ class RecommendArticles():
         return self.__recommendations__
             
     def __setSimilarUsers__(self, p_articles, p_userArticles, p_userArticlesMatrix, p_top):
+        ''' Internal Function. Calculates the similar users for a specific user.
+        INPUT:
+            p_articles           - (pandas dataframe) the dataframe containing the articles
+            p_userArticles       - (pandas dataframe) the dataframe containing the user and articles interaction
+            p_userArticlesMatrix - (pandas dataframe) the matrix for the user / articles interactions. Can be calculated by using 
+                                    function Recommend.getUserArticlesMatrix()
+            p_top                - number of similar users to be calculated
+        '''
         v_userID = self.__User__.getUserID()
-        
-        v_userArticlesMatrix = p_userArticlesMatrix.fillna(0)
 
         v_userArticleGroup = p_userArticles.groupby(['user_id', 'article_id']).agg({'user_id': ['count']}).reset_index()
         v_userArticleGroup.columns = ['user_id', 'article_id', 'Article Read No']
         v_userArticleGroup = v_userArticleGroup.groupby(['user_id']).agg({'Article Read No': ['count', 'sum']})
         v_userArticleGroup.columns = ['Articles Read', 'Articles Interactions']
         
-        v_similarUsers = pd.DataFrame(v_userArticlesMatrix.dot(v_userArticlesMatrix.T).loc[v_userID, :])
+        v_similarUsers = pd.DataFrame(p_userArticlesMatrix.dot(p_userArticlesMatrix.T).loc[v_userID, :])
         v_similarUsers.drop(v_userID, axis = 0, inplace = True)
         v_similarUsers.reset_index(inplace = True)
         v_similarUsers.columns = ['Similar_Users', 'Articles Similarity']
